@@ -1,0 +1,6 @@
+fastapi
+uvicorn
+firebase-admin
+requests
+pydub
+ffmpeg-python
