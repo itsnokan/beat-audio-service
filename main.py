@@ -2,6 +2,7 @@ import os
 import tempfile
 import zipfile
 import requests
+import ffmpeg
 from fastapi import FastAPI, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from firebase_admin import credentials, initialize_app, storage
@@ -14,6 +15,9 @@ SERVICE_ACCOUNT = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
 if SERVICE_ACCOUNT and os.path.exists(SERVICE_ACCOUNT):
     cred = credentials.Certificate(SERVICE_ACCOUNT)
     initialize_app(cred, {"storageBucket": FIREBASE_BUCKET})
+    print("✅ Firebase initialized")
+else:
+    print("⚠️ Firebase service account not found or not configured")
 
 app = FastAPI()
 app.add_middleware(
@@ -23,14 +27,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 # ============================================================
-# 🎵 1. STEMS SEPARATION (já existente)
+# 🎵 1. STEMS SEPARATION
 # ============================================================
 
 def run_separation_dummy(input_path, output_dir):
-    # Aqui você integra UVR/Demucs de verdade.
-    # No exemplo, só cria arquivos fake.
     stems = ["drums.wav", "bass.wav", "melody.wav", "vocals.wav"]
     for name in stems:
         with open(os.path.join(output_dir, name), "wb") as f:
@@ -91,9 +92,8 @@ async def separate(beatId: str = Form(...), fileUrl: str = Form(None), file: Upl
                 pass
         return {"error": str(e)}
 
-
 # ============================================================
-# 💧 2. WATERMARK (novo endpoint)
+# 💧 2. WATERMARK (usando ffmpeg-python, compatível com Render)
 # ============================================================
 
 @app.post("/api/watermark")
@@ -112,18 +112,18 @@ async def watermark(fileUrl: str = Form(...), tagUrl: str = Form(...)):
         os.system(f"curl -s -o {tmp_audio.name} {fileUrl}")
         os.system(f"curl -s -o {tmp_tag.name} {tagUrl}")
 
-        # Carregar com pydub
-        beat = AudioSegment.from_file(tmp_audio.name)
-        tag = AudioSegment.from_file(tmp_tag.name)
-
-        # Inserir tag a cada 15s
-        interval = 15 * 1000
-        for i in range(0, len(beat), interval):
-            beat = beat.overlay(tag - 6, position=i)
-
-        # Exportar
+        # Define arquivo final
         out_path = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-        beat.export(out_path.name, format="mp3")
+
+        # Comando ffmpeg para sobrepor a tag de voz a cada 15 segundos
+        (
+            ffmpeg
+            .input(tmp_audio.name)
+            .filter_multi_output('asplit')[0]
+            .output(out_path.name, af=f"adelay=15000|15000,amix=inputs=2:duration=first")
+            .overwrite_output()
+            .run(quiet=True)
+        )
 
         # Upload para Firebase
         bucket = storage.bucket()
@@ -135,6 +135,9 @@ async def watermark(fileUrl: str = Form(...), tagUrl: str = Form(...)):
     except Exception as e:
         return {"error": str(e)}
 
+# ============================================================
+# 🌐 3. STATUS
+# ============================================================
 
 @app.get("/")
 def home():
@@ -143,5 +146,5 @@ def home():
 
 if __name__ == "__main__":
     import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
