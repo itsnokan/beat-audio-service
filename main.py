@@ -5,7 +5,6 @@ import requests
 from fastapi import FastAPI, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from firebase_admin import credentials, initialize_app, storage
-from pydub import AudioSegment
 
 # === CONFIGURAÇÃO FIREBASE ===
 FIREBASE_BUCKET = os.getenv("FIREBASE_BUCKET")
